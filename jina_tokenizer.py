@@ -260,10 +260,20 @@ class TextChunker:
         full_pattern = "|".join(f"({pattern})" for pattern in patterns)  # 将所有模式合并为一个完整的正则表达式
         return re.compile(full_pattern, re.MULTILINE | re.UNICODE | re.VERBOSE)  # 编译正则表达式并返回
 
-
-    def process_file(self, filepath: str) -> dict:
-        """处理文本文件并返回 JSON 格式的分块和统计信息"""
+    def process_file(self, filepath: str) -> List[TextChunk]:
+        """处理文本文件
         
+        Args:
+            filepath: 待处理文件的路径
+            
+        Returns:
+            分块后的文本列表
+            
+        Raises:
+            FileNotFoundError: 文件不存在时抛出
+            UnicodeDecodeError: 文件编码错误时抛出
+        """
+        # 记录开始时间和内存使用
         start_time = time.time()
         start_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         
@@ -271,10 +281,13 @@ class TextChunker:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
         except FileNotFoundError:
-            return {"chunks": [], "info": {"error": f"File '{filepath}' not found."}}
+            print(f"错误：文件 '{filepath}' 不存在")
+            return []
         except UnicodeDecodeError:
-            return {"chunks": [], "info": {"error": f"File '{filepath}' encoding error."}}
-        
+            print(f"错误：文件 '{filepath}' 编码错误")
+            return []
+            
+        # 进行文本分块
         chunks = []
         for match in self.regex.finditer(content):
             chunk = TextChunk(
@@ -284,82 +297,90 @@ class TextChunker:
                 end_pos=match.end()
             )
             chunks.append(chunk)
-        
+            
+        # 计算处理时间和内存使用
         end_time = time.time()
         end_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         
-        execution_time = end_time - start_time
-        memory_used = end_memory - start_memory
+        # 输出统计信息
+        self._print_statistics(
+            chunks, 
+            end_time - start_time,
+            end_memory - start_memory
+        )
         
-        return self._build_json_response(chunks, execution_time, memory_used)
-
+        return chunks
+    
     def _determine_chunk_type(self, match: re.Match) -> str:
-        """确定文本块的类型"""
+        """确定文本块的类型
+        
+        Args:
+            match: 正则表达式匹配结果
+            
+        Returns:
+            文本块类型的字符串描述
+        """
+        # 根据匹配的组号确定类型
         for i, group in enumerate(match.groups()):
             if group is not None:
                 return f"Type_{i+1}"
         return "Unknown"
     
-    def _build_json_response(self, chunks: List[TextChunk], execution_time: float, memory_used: int) -> dict:
-        """构建返回 JSON 格式的响应"""
-        chunks_data = [
-            {
-                "content": chunk.content,
-                "chunk_type": chunk.chunk_type,
-                "start_pos": chunk.start_pos,
-                "end_pos": chunk.end_pos
-            }
-            for chunk in chunks
-        ]
+    def _print_statistics(
+        self,
+        chunks: List[TextChunk],
+        execution_time: float,
+        memory_used: int
+    ) -> None:
+        """打印处理统计信息
         
-        return {
-            "chunks": chunks_data,
-            "info": {
-                "execution_time": f"{execution_time:.3f} seconds",
-                "memory_used": self._format_bytes(memory_used),
-                "chunk_count": len(chunks)
-            }
-        }
+        Args:
+            chunks: 分块结果列表
+            execution_time: 执行时间（秒）
+            memory_used: 内存使用量（字节）
+        """
+        print(f"分块数量: {len(chunks)}")
+        print(f"执行时间: {execution_time:.3f} 秒")
+        print(f"内存使用: {self._format_bytes(memory_used)}")
+        
+        # 打印前10个分块的预览
+        print("\n前10个分块预览:")
+        for i, chunk in enumerate(chunks[:10]):
+            print(f"{i+1}. [{chunk.chunk_type}] {chunk.content[:50]}...")
     
     @staticmethod
     def _format_bytes(bytes_: int) -> str:
-        """格式化字节数为人类可读的形式"""
+        """格式化字节数为人类可读的形式
+        
+        Args:
+            bytes_: 字节数
+            
+        Returns:
+            格式化后的字符串
+        """
         for unit in ['B', 'KB', 'MB', 'GB']:
             if bytes_ < 1024:
                 return f"{bytes_:.2f} {unit}"
             bytes_ /= 1024
         return f"{bytes_:.2f} TB"
-    
-    def process_str(self, content: str) -> dict:
-        """处理文本字符串并返回 JSON 格式的分块和统计信息"""
-        
-        start_time = time.time()
-        start_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        
-        chunks = []
-        for match in self.regex.finditer(content):
-            chunk = TextChunk(
-                content=match.group(0),
-                chunk_type=self._determine_chunk_type(match),
-                start_pos=match.start(),
-                end_pos=match.end()
-            )
-            chunks.append(chunk)
-        
-        end_time = time.time()
-        end_memory = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        
-        execution_time = end_time - start_time
-        memory_used = end_memory - start_memory
-        
-        return self._build_json_response(chunks, execution_time, memory_used)
 
-    def process(self, input_data, input_type: str) -> dict:
-        """根据输入类型动态选择文件处理或字符串处理"""
+
+def main() -> None:
+    """主函数"""
+    if len(sys.argv) != 2:
+        print("使用方法: python tokenizer.py <input_file>")
+        sys.exit(1)
         
-        if input_type == 'file':
-            return self.process_file(input_data)  # input_data should be a filepath
-        elif input_type == 'string':
-            return self.process_str(input_data)  # input_data should be a text string
-        else:
-            return {"chunks": [], "info": {"error": "Invalid input type, must be 'file' or 'string'."}}
+    filepath = sys.argv[1]
+    chunker = TextChunker()
+    chunks = chunker.process_file(filepath)
+    
+    # 输出处理结果
+    if chunks:
+        print("\n处理完成!")
+    else:
+        print("\n处理失败或没有找到有效的文本块")
+
+
+if __name__ == "__main__":
+    main()
