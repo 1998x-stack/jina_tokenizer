@@ -1,8 +1,8 @@
 # 文本分块正则表达式说明文档
 
-- https://regex101.com/
-- https://gist.github.com/hanxiao/3f60354cf6dc5ac698bc9154163b4e6a
-- https://mp.weixin.qq.com/s/HsyEgqbhO2iqdJAGVs3pdA?version=4.1.31.99548&platform=mac&nwr_flag=1&from=industrynews#wechat_redirect
+- [检测正则表达式regex101](https://regex101.com/)
+- [参考代码](https://gist.github.com/hanxiao/3f60354cf6dc5ac698bc9154163b4e6a)
+- [参考文章](https://mp.weixin.qq.com/s/HsyEgqbhO2iqdJAGVs3pdA)
 
 ## 目录
 1. [基础模式说明](#基础模式说明)
