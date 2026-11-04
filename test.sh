@@ -1,2 +1,3 @@
-python jina_tokenizer.py doc/Red.txt
-python jina_tokenizer.py doc/Grimm.txt
+#!/usr/bin/env sh
+set -eu
+python -m unittest discover -s tests -v

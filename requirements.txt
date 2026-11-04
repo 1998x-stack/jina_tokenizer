@@ -1,2 +1,3 @@
-regex
-flask
+# Install the core package with: pip install -e .
+# Install the HTTP API with: pip install -e '.[api]'
+flask>=3.0,<4

@@ -1,25 +1,8 @@
-from flask import Flask, request, jsonify
-import re
-from tokenizer import TextChunker
+"""WSGI entry point: ``flask --app app run`` or ``gunicorn app:app``."""
 
-app = Flask(__name__)
+from jina_chunker.api import create_app
 
-# Create a TextProcessor instance with the required regex
-regex = re.compile(r'\b\w+\b')  # Example regex to match words
-text_processor = TextChunker()
+app = create_app()
 
-@app.route('/tokenizer', methods=['POST'])
-def process_data():
-    data = request.json
-    input_data = data.get('input_data')
-    input_type = data.get('input_type')
-    
-    if not input_data or not input_type:
-        return jsonify({"error": "Missing input data or input type"}), 400
-    
-    response = text_processor.process(input_data, input_type)
-    return jsonify(response)
-
-
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run(debug=False)
