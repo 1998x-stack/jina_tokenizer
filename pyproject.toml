@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jina-structure-chunker"
+version = "0.2.0"
+description = "Lossless, deterministic Markdown/HTML/CJK-aware text chunking"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "1998x-stack"}]
+keywords = ["chunking", "markdown", "rag", "cjk", "text-processing"]
+classifiers = ["Programming Language :: Python :: 3", "Programming Language :: Python :: 3 :: Only"]
+
+[project.optional-dependencies]
+api = ["flask>=3.0,<4"]
+
+[project.scripts]
+jina-chunker = "jina_chunker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

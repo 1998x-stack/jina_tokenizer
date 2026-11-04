@@ -1,189 +1,96 @@
-# 文本分块正则表达式说明文档
+# jina_tokenizer — Lossless Structure-Aware Text Chunker
 
-- [检测正则表达式regex101](https://regex101.com/)
-- [参考代码](https://gist.github.com/hanxiao/3f60354cf6dc5ac698bc9154163b4e6a)
-- [参考文章](https://mp.weixin.qq.com/s/HsyEgqbhO2iqdJAGVs3pdA)
+[![CI](https://github.com/1998x-stack/jina_tokenizer/actions/workflows/ci.yml/badge.svg)](https://github.com/1998x-stack/jina_tokenizer/actions/workflows/ci.yml)
 
-## 目录
-1. [基础模式说明](#基础模式说明)
-2. [文本模式详解](#文本模式详解)
-3. [使用示例](#使用示例)
-4. [注意事项](#注意事项)
+A small, deterministic Python library for splitting Markdown, HTML snippets, Chinese and English text into **lossless, position-aware chunks**. Designed as a preprocessing building block for RAG and document indexing. No cloud service, model download, or API key is required.
 
-## 基础模式说明
+> **Naming:** This is a *text chunker*, not a model tokenizer. It does not encode text as model token IDs or measure model context-window tokens. The historical repository name and CLI filename are retained for compatibility.
 
-### 基础正则表达式组件
+## Guarantees
 
-1. **避免开始字符** (`AVOID_AT_START`)
-```python
-[\s\]})>,']
+- **Lossless:** `''.join(chunk.content for chunk in chunks) == original_text`.
+- **Exact offsets:** `original_text[chunk.start_pos:chunk.end_pos] == chunk.content`; offsets count Python Unicode code points (not UTF-8 bytes).
+- **Strict character cap:** each output chunk contains at most `max_chunk_chars` code points (default **1000**). Oversized structural blocks are divided and retain the same type; no promise of syntactic completeness across such splits.
+- **Deterministic:** same input and configuration produce the same chunks; no inference calls.
+- **Structured boundaries:** ATX/Setext headings, Markdown lists, blockquotes, fenced and indented code, tables, thematic breaks, reference entries, `<pre>`/`<table>`/heading HTML blocks, and display math (`$$`/`\[...\]`). Unmatched fences and math delimiters extend to the end of the document instead of silently losing content.
+- **Safe HTTP boundary:** local file paths are accepted by trusted local CLI/Python code, **not** by the HTTP endpoint.
+
+This is a practical, heuristic parser, not a complete CommonMark/HTML/LaTeX implementation. It does not guarantee semantic equivalence, full Markdown nesting, language-specific sentence interpretation, grapheme-preserving splits at very small limits, or embedding-model token budgets.
+
+## Install
+
+Python **3.10+**:
+
+```bash
+python -m pip install -e .           # core: standard library only
+python -m pip install -e '.[api]'   # optional Flask HTTP service
 ```
-- 用途：防止在特定字符后开始新的匹配
-- 包含：空白字符、右括号、右花括号、右方括号、逗号、引号等
 
-2. **标点符号** (`PUNCTUATION`)
+## Python API
+
 ```python
-[.!?…]|\.{3}|[\u2026\u2047-\u2049]|[\p{Emoji_Presentation}\p{Extended_Pictographic}]
-```
-- 包含：
-  - 基本标点：句号、感叹号、问号
-  - 省略号：...或…
-  - Unicode特殊标点：⁇-⁉
-  - 表情符号：所有表情符号和扩展图形字符
+from jina_chunker import TextChunker
 
-3. **引用结束** (`QUOTE_END`)
-```python
-(?:'(?=`)|''(?=``))
-```
-- 匹配引用的结束标记
-- 支持单引号和双引号的组合
+source = '# 标题\n\n中文第一句。English second sentence!\n'
+chunks = TextChunker(max_chunk_chars=120).process_text(source)
 
-4. **句子结束** (`SENTENCE_END`)
-```python
-(?:{PUNCTUATION}(?<!{AVOID_AT_START}(?={PUNCTUATION}))|{QUOTE_END})(?=\S|$)
-```
-- 匹配句子的结束位置
-- 考虑标点符号和引用结束的组合
-
-## 文本模式详解
-
-### 1. 标题模式
-```python
-(?:^(?:[#*=-]{1,7}|\w[^\r\n]{0,200}\r?\n[-=]{2,200}|<h[1-6][^>]{0,100}>)[^\r\n]{1,200}(?:</h[1-6]>)?(?:\r?\n|$))
-```
-- 支持类型：
-  - Markdown标题（#）
-  - Setext风格标题（=== 或 ---）
-  - HTML标题标签
-- 示例：
-  ```markdown
-  # 一级标题
-  二级标题
-  --------
-  <h3>三级标题</h3>
-  ```
-
-### 2. 引用标记
-```python
-(?:\[[0-9]+\][^\r\n]{1,800})
-```
-- 匹配文献引用标记
-- 示例：`[1] 这是一个参考文献`
-
-### 3. 列表项模式
-```python
-(?:(?:^|\r?\n)[ \t]{0,3}(?:[-*+•]|\d{1,3}\.\w\.|\[[ xX]\])[ \t]+...)
-```
-- 支持类型：
-  - 无序列表（-、*、+、•）
-  - 有序列表（1. 2. 3.）
-  - 任务列表（[ ] [x] [X]）
-- 支持多级嵌套（最多6级）
-- 示例：
-  ```markdown
-  - 一级列表项
-    * 二级列表项
-      + 三级列表项
-  1. 有序列表项
-  [x] 已完成任务
-  [ ] 未完成任务
-  ```
-
-### 4. 引用块模式
-```python
-(?:(?:^>(?:>|\s{2,}){0,2}...)\r?\n?){1,15})
-```
-- 支持多级嵌套引用
-- 最多支持15行
-- 示例：
-  ```markdown
-  > 一级引用
-  >> 二级引用
-  >>> 三级引用
-  ```
-
-### 5. 代码块模式
-```python
-(?:(?:^|\r?\n)(?:```|~~~)(?:\w{0,20})?\r?\n[\s\S]{0,1500}?(?:```|~~~)\r?\n?|...)
-```
-- 支持类型：
-  - 围栏式代码块（```或~~~）
-  - 缩进式代码块（4个空格或1个制表符）
-  - HTML代码块（<pre>和<code>标签）
-- 示例：
-  ```markdown
-  ```python
-  def hello():
-      print("Hello, World!")
-  ```
-  
-      缩进式代码块
-  
-  <pre><code>HTML代码块</code></pre>
-  ```
-
-### 6. 表格模式
-```python
-(?:(?:^|\r?\n)(?:\|[^\r\n]{0,200}\|(?:\r?\n\|[-:]{1,200}\|){0,1}...)
-```
-- 支持：
-  - Markdown表格
-  - HTML表格
-- 单元格长度限制：200字符
-- 最大行数：20行
-- 示例：
-  ```markdown
-  | 列1 | 列2 |
-  |-----|-----|
-  | 内容1 | 内容2 |
-  ```
-
-### 7-14. 其他模式
-（按照相同格式继续描述其他模式...）
-
-## 使用示例
-
-### 基本使用
-```python
-from text_chunker import TextChunker
-
-chunker = TextChunker()
-chunks = chunker.process_file("input.txt")
-
+assert ''.join(item.content for item in chunks) == source
 for chunk in chunks:
-    print(f"类型: {chunk.chunk_type}")
-    print(f"内容: {chunk.content}\n")
+    print(chunk.chunk_type, chunk.start_pos, chunk.end_pos, repr(chunk.content))
 ```
 
-### 处理表情符号
-```python
-text = "Hello! 👋 这是一个带表情符号的句子 😊"
-chunks = chunker.process_text(text)
+`TextChunk` contains `content`, `chunk_type`, `start_pos`, `end_pos`, and `to_dict()`. The modern `process_file(path)` returns `list[TextChunk]` and raises ordinary file errors.
+
+### CLI
+
+```bash
+jina-chunker doc/Grimm.txt --max-chars 1000
+jina-chunker --text '# Hello\n\n你好。' --json
+cat README.md | jina-chunker --stdin --json
+# original script is still a valid CLI entry point:
+python jina_tokenizer.py doc/Grimm.txt --json
 ```
 
-## 注意事项
+### HTTP API (optional)
 
-1. **长度限制**
-   - 每种模式都有其特定的长度限制
-   - 超出限制的内容可能会被截断或分成多个块
+```bash
+python -m pip install -e '.[api]'
+flask --app app run --host 127.0.0.1 --port 5000
+curl -sS http://127.0.0.1:5000/tokenizer \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Hello! 你好。"}'
+```
 
-2. **嵌套限制**
-   - 列表最多支持6级嵌套
-   - 引用块最多支持3级嵌套
-   - 括号内容最多支持5级嵌套
+`POST /tokenizer` accepts `{"text":"..."}` or the legacy payload `{"input_data":"...","input_type":"string"}`. Response includes `chunks` and `info`; `GET /healthz` is available. File paths sent by HTTP are rejected with HTTP 400. Invalid JSON and types return 400, non-JSON requests 415, excessive bodies/text 413. The default maximum text length is 200,000 characters; customize through `create_app(max_text_chars=...)` in a deployment wrapper. The built-in development server is not a production deployment choice.
 
-3. **特殊字符处理**
-   - 表情符号被视为句子边界
-   - Unicode特殊字符都有适当的处理
+### Historical compatibility
 
-4. **性能考虑**
-   - 复杂的正则表达式可能影响性能
-   - 建议对大文件进行分批处理
-   - 可以根据需要调整各种限制参数
+- `from tokenizer import TextChunker` preserves the **JSON-returning** `process_str`, `process_file`, and `process(input_data, input_type)` interface; the legacy `process_file` returns an error payload for file read failures.
+- `from jina_tokenizer import TextChunker` preserves the original **list-returning** local `process_file` interface and exposes `process_text`.
+- New code should import from `jina_chunker` and use `process_text` / `process_file`.
+- `chunk_type` now uses meaningful names (`heading`, `paragraph`, `list`, `code`, `table`, `blockquote`, `math`, `reference`, `thematic_break`, `whitespace`) rather than unstable `Type_N` group indexes. If you rely on old labels, migrate explicitly.
 
-5. **编码要求**
-   - 输入文件必须是UTF-8编码
-   - 确保正确处理所有Unicode字符
+## Validate and benchmark
 
-## 维护和更新
-最后更新日期：2024-02-06 
+```bash
+PYTHONPATH=src:. python -m unittest discover -s tests -v
+PYTHONPATH=src python benchmarks/benchmark.py
+```
+
+CI runs Python 3.10 and 3.13 with the API extra. The benchmark prints local time and throughput; it is not a claim of performance relative to Jina's hosted Segmenter.
+
+## Background and sources
+
+The earlier README documented a single large regex inspired by structural text splitting. The present implementation uses an **independent line scanner plus bounded character splitting** to make coverage and offset invariants testable, rather than copying the linked regex.
+
+- [Jina Segmenter — official overview](https://jina.ai/segmenter): comparison point for chunking and model tokenizer functionality; this project does not call the API.
+- [Jina late chunking explainer](https://jina.ai/news/late-chunking-in-long-context-embedding-models/): downstream embedding technique distinct from our local chunker.
+- [Jina-inspired regex example (third-party Gist)](https://gist.github.com/Josephrp/880181141c76259c4eda1fab247fe4ae): historical background only, **not** copied into this source.
+- [regex101](https://regex101.com/): useful to explore individual rules, but its engine is not identical to Python `re`.
+- [Original Han Xiao Gist](https://gist.github.com/hanxiao/3f60354cf6dc5ac698bc9154163b4e6a) and [original WeChat article](https://mp.weixin.qq.com/s/HsyEgqbhO2iqdJAGVs3pdA): retained for provenance; unavailable to verify in the November 2026 review. Do not treat them as verified API or license documentation.
+
+Further details: [Architecture](docs/ARCHITECTURE.md), [Reference audit](docs/REFERENCE_REVIEW.md), [Development](docs/DEVELOPMENT.md).
+
+## License
+
+**The original repository does not currently contain a LICENSE file.** Redistribution terms must be confirmed with the repository owner before publication as a reusable licensed package. This PR deliberately does not invent a license or assume that the upstream Jina/Gist license covers this implementation.
